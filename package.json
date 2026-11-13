@@ -1,8 +1,8 @@
 {
   "name": "piwin-surge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "description": "Session-scoped system prompt switcher and isolation lab for piwin, adapted for Desktop interactive menus, composer status chip, and preview widget.",
+  "description": "Session-scoped system prompt switcher and interactive guide console for piwin Desktop & CLI (/surge menu, status chip, and preview widget).",
   "license": "MIT",
   "engines": {
     "node": ">=22.19.0"

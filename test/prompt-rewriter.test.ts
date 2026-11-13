@@ -101,7 +101,7 @@ describe('rewriteSystemPrompt', () => {
 });
 
 describe('parseSurgeCommand', () => {
-  it('parses menu, power toggles, mode, source, panel, refresh, and help subcommands', () => {
+  it('parses menu, power toggles, mode, source, prompt, panel, refresh, and guide subcommands', () => {
     expect(parseSurgeCommand('')).toEqual({ action: 'menu' });
     expect(parseSurgeCommand('on')).toEqual({ action: 'enable' });
     expect(parseSurgeCommand('off')).toEqual({ action: 'disable' });
@@ -112,9 +112,15 @@ describe('parseSurgeCommand', () => {
       action: 'source',
       target: '~/my prompt.md',
     });
+    expect(parseSurgeCommand('prompt Be concise.')).toEqual({
+      action: 'prompt',
+      text: 'Be concise.',
+    });
+    expect(parseSurgeCommand('prompt')).toEqual({ action: 'prompt' });
     expect(parseSurgeCommand('panel off')).toEqual({ action: 'panel', visibility: 'off' });
     expect(parseSurgeCommand('reload')).toEqual({ action: 'refresh' });
-    expect(parseSurgeCommand('help')).toEqual({ action: 'help' });
+    expect(parseSurgeCommand('help')).toEqual({ action: 'guide' });
+    expect(parseSurgeCommand('guide')).toEqual({ action: 'guide' });
     expect(parseSurgeCommand('wat')).toEqual({ action: 'unknown', raw: 'wat' });
   });
 });

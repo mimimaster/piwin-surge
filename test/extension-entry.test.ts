@@ -116,7 +116,7 @@ describe('piwin-surge extension lifecycle and Desktop UI bridge', () => {
     expect(h.widgets.get(WIDGET_KEY)?.lines).toBeUndefined();
   });
 
-  it('publishes status chip, aboveEditor widget, and rewrites prompt when enabled', async () => {
+  it('publishes status chip, aboveEditor widget with persona preview, and rewrites prompt when enabled', async () => {
     const h = createHarness(tempDir);
     await h.fireHook('session_start');
     await h.runCommand('on');
@@ -125,6 +125,7 @@ describe('piwin-surge extension lifecycle and Desktop UI bridge', () => {
     const widgetBefore = h.widgets.get(WIDGET_KEY);
     expect(widgetBefore?.placement).toBe('aboveEditor');
     expect(widgetBefore?.lines?.[0]).toContain('已开启');
+    expect(widgetBefore?.lines?.[1]).toContain('当前人设预览');
 
     const rewritten = (await h.fireHook('before_agent_start', {
       systemPrompt: 'Stock\nCurrent working directory: /demo/work',
@@ -138,9 +139,37 @@ describe('piwin-surge extension lifecycle and Desktop UI bridge', () => {
     expect(h.widgets.get(WIDGET_KEY)?.lines).toBeUndefined();
   });
 
-  it('loads external prompt files (supporting quoted paths), reloads edits, and rolls back on errors', async () => {
+  it('supports inline custom prompt text without disk files and clears cleanly on off', async () => {
+    const h = createHarness(tempDir);
+    await h.runCommand('prompt Act like a strict security auditor.');
+    await h.runCommand('on');
+
+    expect(h.statuses.get(STATUS_KEY)).toBe('SURGE · strict · 自定义文本');
+    const out = (await h.fireHook('before_agent_start', {
+      systemPrompt: 'Stock\nCurrent working directory: /work',
+    })) as { systemPrompt: string };
+    expect(out.systemPrompt).toBe('Act like a strict security auditor.\n\nCurrent working directory: /work');
+  });
+
+  it('pins the onboarding quick guide aboveEditor on /surge guide and menu selection', async () => {
+    const h = createHarness(tempDir);
+    h.queueSelect((opts) => opts.find((o) => o.includes('查看使用指南')));
+    await h.runCommand('');
+
+    const guideWidget = h.widgets.get(WIDGET_KEY);
+    expect(guideWidget?.placement).toBe('aboveEditor');
+    expect(guideWidget?.lines?.[0]).toContain('Piwin Surge 快速使用指南');
+    expect(guideWidget?.lines?.some((line) => line.includes('免建文件'))).toBe(true);
+
+    await h.runCommand('panel off');
+    expect(h.widgets.get(WIDGET_KEY)?.lines).toBeUndefined();
+  });
+
+  it('loads external prompt files, rejects binary files, reloads edits, and rolls back on errors', async () => {
     const promptPath = join(tempDir, 'persona.md');
+    const binaryPath = join(tempDir, 'binary.dat');
     await writeFile(promptPath, '  First persona v1  \n', 'utf8');
+    await writeFile(binaryPath, Buffer.from([0x00, 0x01, 0x02]));
 
     const h = createHarness(tempDir);
     await h.runCommand(`source "${promptPath}"`);
@@ -159,7 +188,10 @@ describe('piwin-surge extension lifecycle and Desktop UI bridge', () => {
     })) as { systemPrompt: string };
     expect(second.systemPrompt.startsWith('Second persona v2')).toBe(true);
 
-    // Invalid path rolls back to previous valid persona without crashing or overwriting
+    await h.runCommand(`source "${binaryPath}"`);
+    expect(h.notifications.at(-1)?.level).toBe('warning');
+    expect(h.notifications.at(-1)?.message).toContain('二进制文件');
+
     await h.runCommand('source ./does-not-exist.md');
     expect(h.notifications.at(-1)?.level).toBe('warning');
     const third = (await h.fireHook('before_agent_start', {
@@ -171,30 +203,28 @@ describe('piwin-surge extension lifecycle and Desktop UI bridge', () => {
     expect(h.statuses.get(STATUS_KEY)).toBe('SURGE · strict · 内嵌示例');
   });
 
-  it('opens interactive Desktop select/input flow when invoked with no arguments', async () => {
-    const promptPath = join(tempDir, 'custom.md');
-    await writeFile(promptPath, 'Interactive custom persona', 'utf8');
-
+  it('opens interactive Desktop select/input source submenu without requiring files', async () => {
     const h = createHarness(tempDir, true);
     // Step 1: pick mode change -> append
     h.queueSelect((opts) => opts.find((o) => o.includes('切换合成模式')));
     h.queueSelect((opts) => opts.find((o) => o.startsWith('append')));
     await h.runCommand('');
 
-    // Step 2: pick external path -> input path
-    h.queueSelect((opts) => opts.find((o) => o.includes('设置提示词文件路径')));
-    h.queueInput(promptPath);
+    // Step 2: pick source submenu -> inline custom text -> input prompt
+    h.queueSelect((opts) => opts.find((o) => o.includes('配置提示词来源')));
+    h.queueSelect((opts) => opts.find((o) => o.includes('免建文件')));
+    h.queueInput('Interactive inline persona');
     await h.runCommand('');
 
     // Step 3: enable via menu
     h.queueSelect((opts) => opts.find((o) => o.includes('开启提示词注入')));
     await h.runCommand('');
 
-    expect(h.statuses.get(STATUS_KEY)).toBe('SURGE · append · custom.md');
+    expect(h.statuses.get(STATUS_KEY)).toBe('SURGE · append · 自定义文本');
     const out = (await h.fireHook('before_agent_start', {
       systemPrompt: 'Base prompt',
     })) as { systemPrompt: string };
-    expect(out.systemPrompt).toBe('Interactive custom persona\n\nBase prompt');
+    expect(out.systemPrompt).toBe('Interactive inline persona\n\nBase prompt');
   });
 
   it('clears surface on session_start and session_shutdown', async () => {

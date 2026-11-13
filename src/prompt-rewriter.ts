@@ -1,6 +1,6 @@
 export type SurgeMode = 'strict' | 'replace' | 'append';
 
-export type PromptSourceKind = 'embedded' | 'file';
+export type PromptSourceKind = 'embedded' | 'custom' | 'file';
 
 export type RewriteTelemetry = {
   mode: SurgeMode;
@@ -19,6 +19,7 @@ export type SurgeState = {
   sourcePath?: string;
   persona: string;
   panelVisible: boolean;
+  guideVisible: boolean;
   lastRewrite?: RewriteTelemetry;
 };
 
@@ -28,11 +29,12 @@ export type ParsedSurgeCommand =
   | { action: 'disable' }
   | { action: 'toggle' }
   | { action: 'status' }
+  | { action: 'guide' }
   | { action: 'mode'; mode?: SurgeMode; invalidMode?: string }
   | { action: 'source'; target?: string }
+  | { action: 'prompt'; text?: string }
   | { action: 'panel'; visibility: 'on' | 'off' | 'toggle' }
   | { action: 'refresh' }
-  | { action: 'help' }
   | { action: 'unknown'; raw: string };
 
 export const DEFAULT_EMBEDDED_PROMPT =
@@ -53,6 +55,7 @@ export function createInitialState(): SurgeState {
     sourceKind: 'embedded',
     persona: DEFAULT_EMBEDDED_PROMPT,
     panelVisible: false,
+    guideVisible: false,
   };
 }
 
@@ -202,6 +205,8 @@ export function parseSurgeCommand(rawArgs: string): ParsedSurgeCommand {
     }
     case 'source':
       return rest ? { action: 'source', target: rest } : { action: 'source' };
+    case 'prompt':
+      return rest ? { action: 'prompt', text: rest } : { action: 'prompt' };
     case 'panel': {
       const normalized = rest.toLowerCase();
       if (!normalized || normalized === 'toggle') return { action: 'panel', visibility: 'toggle' };
@@ -213,9 +218,12 @@ export function parseSurgeCommand(rawArgs: string): ParsedSurgeCommand {
     case 'refresh':
       return { action: 'refresh' };
     case 'help':
+    case 'guide':
+    case 'tutorial':
+    case '指南':
     case '-h':
     case '--help':
-      return { action: 'help' };
+      return { action: 'guide' };
     default:
       return { action: 'unknown', raw: trimmed };
   }

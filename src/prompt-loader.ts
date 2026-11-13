@@ -60,8 +60,15 @@ export async function loadPromptFile(rawInput: string, cwd: string): Promise<Pro
   }
 
   try {
-    const raw = await readFile(resolvedPath, 'utf8');
-    const content = raw.replace(/^\uFEFF/, '').trim();
+    const rawBuffer = await readFile(resolvedPath);
+    if (rawBuffer.includes(0)) {
+      return {
+        ok: false,
+        resolvedPath,
+        error: `目标似乎是二进制文件 (${resolvedPath})，请选择 UTF-8 文本或 .md 文件。`,
+      };
+    }
+    const content = rawBuffer.toString('utf8').replace(/^\uFEFF/, '').trim();
     if (!content) {
       return {
         ok: false,

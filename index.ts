@@ -1,5 +1,5 @@
 /**
- * Piwin Surge — 会话级系统提示词切换与单变量实验台（深度适配 piwin 桌面端 `/surge` 交互菜单、状态芯片与预览面板）。
+ * Piwin Surge — 会话级系统提示词切换控制台（输入 `/surge` 打开交互配置与新手指南，支持状态芯片与预览面板）。
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { loadPromptFile } from './src/prompt-loader.js';
@@ -16,9 +16,10 @@ import {
   buildStatusSummary,
   clearDesktopSurface,
   describeSourceShort,
+  openSourceMenu,
   openSurgeMenu,
+  promptCustomPersonaInput,
   promptModeSelection,
-  promptSourcePathInput,
   syncDesktopSurface,
 } from './src/surge-ui.js';
 
@@ -33,6 +34,7 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
 
   function applyEnabled(enabled: boolean, ctx: ExtensionContext): void {
     state.enabled = enabled;
+    state.guideVisible = false;
     state.panelVisible = enabled;
     if (!enabled) {
       delete state.lastRewrite;
@@ -41,22 +43,41 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
     notify(
       ctx,
       enabled
-        ? `Piwin Surge 已开启 · 模式: ${state.mode} · 来源: ${describeSourceShort(state)}（仅当前会话生效）`
-        : 'Piwin Surge 已关闭 · 恢复 piwin 默认系统提示词。',
+        ? `Piwin Surge 已开启 · 模式: ${state.mode} · 来源: ${describeSourceShort(state)}（下条消息生效，仅限当前会话）`
+        : 'Piwin Surge 已关闭 · 已恢复 piwin 默认系统提示词。',
       'info',
     );
   }
 
   function applyMode(mode: SurgeMode, ctx: ExtensionContext): void {
     state.mode = mode;
+    state.guideVisible = false;
     syncDesktopSurface(state, ctx);
-    notify(ctx, `合成模式已切换为 ${mode}${state.enabled ? '（下轮生效）' : '（当前未开启，运行 /surge on 启用）'}。`);
+    notify(ctx, `合成模式已切换为 ${mode}${state.enabled ? '（下条消息生效）' : '（当前未开启，运行 /surge on 或在 /surge 菜单启用）'}。`);
+  }
+
+  function applyCustomPrompt(rawText: string, ctx: ExtensionContext): void {
+    const content = rawText.trim();
+    if (!content) {
+      notify(ctx, '提示词文本不能为空，已保持原设置。', 'warning');
+      return;
+    }
+    state.sourceKind = 'custom';
+    delete state.sourcePath;
+    state.persona = content;
+    state.guideVisible = false;
+    syncDesktopSurface(state, ctx);
+    notify(
+      ctx,
+      `已设定自定义人设 (${content.length} 字符)${state.enabled ? '，下条消息生效' : '；运行 /surge on 开启注入'}。`,
+    );
   }
 
   function resetToEmbedded(ctx: ExtensionContext): void {
     state.sourceKind = 'embedded';
     delete state.sourcePath;
     state.persona = DEFAULT_EMBEDDED_PROMPT;
+    state.guideVisible = false;
     syncDesktopSurface(state, ctx);
     notify(ctx, `已切回内嵌示例提示词 (${state.persona.length} 字符)。`);
   }
@@ -74,13 +95,14 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
     state.sourceKind = 'file';
     state.sourcePath = loaded.resolvedPath;
     state.persona = loaded.content;
+    state.guideVisible = false;
     syncDesktopSurface(state, ctx);
     notify(ctx, `已载入外部提示词: ${loaded.resolvedPath} (${loaded.content.length} 字符)。`);
   }
 
   async function reloadExternalSource(ctx: ExtensionContext): Promise<void> {
     if (state.sourceKind !== 'file' || !state.sourcePath) {
-      notify(ctx, `当前使用内嵌示例提示词 (${state.persona.length} 字符)，无需重载文件。`);
+      notify(ctx, `当前来源为${describeSourceShort(state)} (${state.persona.length} 字符)，仅外部文件支持重载。`);
       return;
     }
     const loaded = await loadPromptFile(state.sourcePath, ctx.cwd);
@@ -89,14 +111,31 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
       return;
     }
     state.persona = loaded.content;
+    state.guideVisible = false;
     syncDesktopSurface(state, ctx);
     notify(ctx, `已重新载入: ${loaded.resolvedPath} (${loaded.content.length} 字符)。`);
   }
 
   function setPanelVisibility(visibility: 'on' | 'off' | 'toggle', ctx: ExtensionContext): void {
-    state.panelVisible = visibility === 'toggle' ? !state.panelVisible : visibility === 'on';
+    if (visibility === 'off') {
+      state.guideVisible = false;
+      state.panelVisible = false;
+    } else if (visibility === 'on') {
+      state.guideVisible = false;
+      state.panelVisible = true;
+    } else {
+      const currentlyShowingStatus = state.panelVisible && !state.guideVisible;
+      state.guideVisible = false;
+      state.panelVisible = !currentlyShowingStatus;
+    }
     syncDesktopSurface(state, ctx);
-    notify(ctx, state.panelVisible ? '已在输入框上方展开 Piwin Surge 状态面板。' : '已收起 Piwin Surge 状态面板。');
+    notify(ctx, state.panelVisible ? '已在输入框上方展开 Piwin Surge 状态面板。' : '已收起输入框上方提示面板。');
+  }
+
+  function showGuide(ctx: ExtensionContext): void {
+    state.guideVisible = true;
+    syncDesktopSurface(state, ctx);
+    notify(ctx, buildHelpSummary());
   }
 
   pi.on('session_start', async (_event, ctx) => {
@@ -123,7 +162,7 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand('surge', {
-    description: '提示词切换实验台 [on|off|mode|source|panel|status]',
+    description: '系统提示词控制台（直接运行打开菜单，或传 on|off|mode|source|prompt|guide）',
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const parsed = parseSurgeCommand(args);
 
@@ -136,11 +175,14 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
           await openSurgeMenu(state, ctx, {
             onToggleEnabled: () => applyEnabled(!state.enabled, ctx),
             onSetMode: (mode) => applyMode(mode, ctx),
+            onSetCustomPrompt: (text) => applyCustomPrompt(text, ctx),
             onSetSourcePath: (target) => applyExternalSource(target, ctx),
             onResetEmbedded: () => resetToEmbedded(ctx),
             onReloadSource: () => reloadExternalSource(ctx),
             onTogglePanel: () => setPanelVisibility('toggle', ctx),
+            onShowGuide: () => showGuide(ctx),
             onShowStatus: () => {
+              state.guideVisible = false;
               state.panelVisible = true;
               syncDesktopSurface(state, ctx);
               notify(ctx, buildStatusSummary(state));
@@ -161,8 +203,13 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
           return;
 
         case 'status':
+          state.guideVisible = false;
           syncDesktopSurface(state, ctx);
           notify(ctx, buildStatusSummary(state));
+          return;
+
+        case 'guide':
+          showGuide(ctx);
           return;
 
         case 'mode':
@@ -188,13 +235,30 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
             return;
           }
           if (ctx.hasUI) {
-            const input = await promptSourcePathInput(state, ctx);
+            await openSourceMenu(state, ctx, {
+              onSetCustomPrompt: (text) => applyCustomPrompt(text, ctx),
+              onSetSourcePath: (target) => applyExternalSource(target, ctx),
+              onResetEmbedded: () => resetToEmbedded(ctx),
+              onReloadSource: () => reloadExternalSource(ctx),
+            });
+            return;
+          }
+          notify(ctx, `当前来源: ${state.sourcePath ?? describeSourceShort(state)}；用法: /surge source <path|embedded>`);
+          return;
+
+        case 'prompt':
+          if (parsed.text) {
+            applyCustomPrompt(parsed.text, ctx);
+            return;
+          }
+          if (ctx.hasUI) {
+            const input = await promptCustomPersonaInput(state, ctx);
             if (input !== undefined && input.trim()) {
-              await applyExternalSource(input, ctx);
+              applyCustomPrompt(input, ctx);
             }
             return;
           }
-          notify(ctx, `当前来源: ${state.sourcePath ?? '内嵌示例'}；用法: /surge source <path|embedded>`);
+          notify(ctx, '用法: /surge prompt <人设提示词文本>');
           return;
 
         case 'panel':
@@ -203,10 +267,6 @@ export default function piwinSurgeExtension(pi: ExtensionAPI): void {
 
         case 'refresh':
           await reloadExternalSource(ctx);
-          return;
-
-        case 'help':
-          notify(ctx, buildHelpSummary());
           return;
 
         case 'unknown':
